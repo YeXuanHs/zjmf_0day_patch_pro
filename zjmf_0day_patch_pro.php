@@ -304,44 +304,6 @@ if ($mfcwIsSqlVulnerable) {
 }
 
 // ============================================================
-// 6. 注册验证码强制
-// ============================================================
-$mfcwIsRegister = (
-    $mfcwPath === '/v1/register'
-    || $mfcwPath === '/register'
-    || ($mfcwPath === '/login' && $mfcwAction === 'register')
-);
-
-if ($mfcwIsRegister && $mfcwMethod === 'POST') {
-    // 检查图形验证码
-    $isCaptcha = configuration('is_captcha');
-    if ($isCaptcha == 1) {
-        $hasCaptcha = !empty($mfcwAllParams['captcha']) && !empty($mfcwAllParams['idtoken']);
-        if (!$hasCaptcha) {
-            zjmfLogAttack('register_no_captcha', $mfcwAllParams);
-            zjmfBlockResponse('注册需要图形验证码');
-        }
-    }
-
-    // 检查短信/邮箱验证码
-    $hasSmsCode = !empty($mfcwAllParams['sms_code']) || !empty($mfcwAllParams['code']);
-    $hasPhone = !empty($mfcwAllParams['phone']) || !empty($mfcwAllParams['phonenumber']);
-    $hasEmail = !empty($mfcwAllParams['email']);
-
-    // 如果有手机号但没有短信验证码
-    if ($hasPhone && !$hasSmsCode) {
-        zjmfLogAttack('register_no_sms_code', $mfcwAllParams);
-        zjmfBlockResponse('注册需要短信验证码');
-    }
-
-    // 如果有邮箱但没有邮箱验证码
-    if ($hasEmail && !$hasSmsCode) {
-        zjmfLogAttack('register_no_email_code', $mfcwAllParams);
-        zjmfBlockResponse('注册需要邮箱验证码');
-    }
-}
-
-// ============================================================
 // 7. 改密安全加固
 // ============================================================
 $mfcwIsPasswordChange = (
