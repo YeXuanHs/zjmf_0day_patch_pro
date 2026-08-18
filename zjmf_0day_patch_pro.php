@@ -269,11 +269,12 @@ if ($mfcwIsSqlVulnerable) {
         '/**/', '/*!',
     ];
 
-    // 排除的参数（密码、验证码等可能包含特殊字符的字段）
+    // 排除的参数（密码、验证码、邮箱等可能包含特殊字符的字段）
     $excludeParams = [
         'password', 'old_password', 'new_password', 'repassword',
         'checkPassword', 'confirm_password', 'captcha', 'code',
         'sms_code', 'phone_code', 'email_code', 'verify_code',
+        'email', 'mail', 'e_mail',
     ];
 
     $mfcwBlocked = false;
