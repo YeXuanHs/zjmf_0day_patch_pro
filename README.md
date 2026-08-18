@@ -133,9 +133,13 @@ $disableV1 = false;
 $enableUpstreamHide = true;
 
 // 允许的站内域名（开放重定向防护白名单）
+// 默认自动获取当前域名，无需手动配置
+// 如需放行其他域名（如CDN），在数组中添加即可
 $allowedDomains = [
-    $_SERVER['HTTP_HOST'] ?? '',
-    'www.' . ($_SERVER['HTTP_HOST'] ?? ''),
+    $_SERVER['HTTP_HOST'] ?? '',              // 自动获取当前域名（如 example.com）
+    'www.' . ($_SERVER['HTTP_HOST'] ?? ''),   // 自动添加 www 前缀（如 www.example.com）
+    // 'cdn.example.com',                     // 自定义CDN域名（按需添加）
+    // 'static.example.com',                  // 自定义静态资源域名（按需添加）
 ];
 
 // 短信/邮件发送频率限制（每60秒最多发送次数，0=不限制）
@@ -148,8 +152,46 @@ $smsRateLimit = 3;
 |--------|--------|------|
 | `$disableV1` | `false` | 是否关闭整个 /v1 目录 |
 | `$enableUpstreamHide` | `true` | 是否启用上游信息隐藏 |
-| `$allowedDomains` | 当前域名 | 开放重定向防护白名单 |
+| `$allowedDomains` | 当前域名 | 开放重定向防护白名单，自动获取当前域名 |
 | `$smsRateLimit` | `3` | 每60秒最多发送验证码次数，0=不限制 |
+
+### 白名单配置示例
+
+**默认配置（推荐）：**
+```php
+$allowedDomains = [
+    $_SERVER['HTTP_HOST'] ?? '',
+    'www.' . ($_SERVER['HTTP_HOST'] ?? ''),
+];
+```
+自动获取当前域名，无需手动修改。
+
+**添加CDN域名：**
+```php
+$allowedDomains = [
+    $_SERVER['HTTP_HOST'] ?? '',
+    'www.' . ($_SERVER['HTTP_HOST'] ?? ''),
+    'cdn.example.com',
+    'static.example.com',
+];
+```
+
+**多域名站点：**
+```php
+$allowedDomains = [
+    $_SERVER['HTTP_HOST'] ?? '',
+    'www.' . ($_SERVER['HTTP_HOST'] ?? ''),
+    'example.com',
+    'www.example.com',
+    'example.net',
+    'www.example.net',
+];
+```
+
+**不限制（不推荐）：**
+```php
+$allowedDomains = [];  // 空数组 = 不检查域名
+```
 
 ## 安装方式
 
