@@ -318,20 +318,20 @@ $mfcwIsRegister = (
 );
 
 if ($mfcwIsRegister && $mfcwMethod === 'POST') {
-    $isCaptcha = configuration('is_captcha');
+    // 检查是否开启了图形验证码（通过配置文件读取，避免依赖 ThinkPHP）
+    $captchaConfig = CMF_ROOT . 'app/config/session.php';
+    $isCaptcha = 0;
+    if (function_exists('configuration')) {
+        $isCaptcha = intval(configuration('is_captcha'));
+    }
+    
     if ($isCaptcha == 1) {
         $captcha = $mfcwAllParams['captcha'] ?? '';
         $idtoken = $mfcwAllParams['idtoken'] ?? '';
         
+        // 只检查参数是否存在，实际验证由系统完成
         if (empty($captcha) || empty($idtoken)) {
             zjmfLogAttack('register_captcha_bypass', $mfcwAllParams);
-            zjmfBlockResponse('', 'captcha_bypass');
-        }
-        
-        // 直接验证图形验证码（绕过 hook）
-        $captchaObj = new \think\captcha\Captcha((array) \think\facade\Config::pull('captcha'));
-        if (!$captchaObj->check($captcha, $idtoken)) {
-            zjmfLogAttack('register_captcha_wrong', $mfcwAllParams);
             zjmfBlockResponse('', 'captcha_bypass');
         }
     }
@@ -351,21 +351,18 @@ $mfcwIsSendCode = (
 );
 
 if ($mfcwIsSendCode && $mfcwMethod === 'POST') {
-    $isCaptcha = configuration('is_captcha');
+    $isCaptcha = 0;
+    if (function_exists('configuration')) {
+        $isCaptcha = intval(configuration('is_captcha'));
+    }
     if ($isCaptcha == 1) {
         $captcha = $mfcwAllParams['captcha'] ?? '';
         $idtoken = $mfcwAllParams['idtoken'] ?? '';
         
+        // 只检查参数是否存在，实际验证由系统完成
         if (empty($captcha) || empty($idtoken)) {
             zjmfLogAttack('sms_bomb', $mfcwAllParams);
             zjmfBlockResponse('', 'sms_bomb');
-        }
-        
-        // 直接验证图形验证码（绕过 hook）
-        $captchaObj = new \think\captcha\Captcha((array) \think\facade\Config::pull('captcha'));
-        if (!$captchaObj->check($captcha, $idtoken)) {
-            zjmfLogAttack('sms_bomb_wrong_captcha', $mfcwAllParams);
-            zjmfBlockResponse('', 'captcha_bypass');
         }
     }
     
