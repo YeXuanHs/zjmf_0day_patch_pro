@@ -31,6 +31,9 @@ $allowedDomains = [
     'www.' . ($_SERVER['HTTP_HOST'] ?? ''),
 ];
 
+// 短信/邮件发送频率限制（每60秒最多发送次数，0=不限制）
+$smsRateLimit = 3;
+
 // ============================================================
 
 if (PHP_SAPI === 'cli') {
@@ -325,6 +328,46 @@ if ($mfcwIsSendCode && $mfcwMethod === 'POST') {
         if (empty($captcha) || empty($idtoken)) {
             zjmfLogAttack('sms_bomb', $mfcwAllParams);
             zjmfBlockResponse('发送验证码需要图形验证码');
+        }
+        
+        // 直接验证图形验证码（绕过 hook）
+        $captchaObj = new \think\captcha\Captcha((array) \think\facade\Config::pull('captcha'));
+        if (!$captchaObj->check($captcha, $idtoken)) {
+            zjmfLogAttack('sms_bomb_wrong_captcha', $mfcwAllParams);
+            zjmfBlockResponse('图形验证码错误');
+        }
+    }
+    
+    // 短信/邮件发送频率限制
+    if ($smsRateLimit > 0) {
+        $target = $mfcwAllParams['phone'] ?? $mfcwAllParams['phonenumber'] ?? $mfcwAllParams['email'] ?? '';
+        if (!empty($target)) {
+            $rateFile = __DIR__ . '/zjmf_sms_rate.json';
+            $rateData = [];
+            if (file_exists($rateFile)) {
+                $rateData = json_decode(file_get_contents($rateFile), true) ?: [];
+            }
+            
+            $now = time();
+            $targetHash = md5($target);
+            
+            // 清理过期记录
+            if (isset($rateData[$targetHash])) {
+                $rateData[$targetHash] = array_filter($rateData[$targetHash], function($ts) use ($now) {
+                    return ($now - $ts) < 60;
+                });
+            }
+            
+            // 检查频率
+            $count = isset($rateData[$targetHash]) ? count($rateData[$targetHash]) : 0;
+            if ($count >= $smsRateLimit) {
+                zjmfLogAttack('sms_rate_limit', ['target' => $target, 'count' => $count]);
+                zjmfBlockResponse('发送频率过高，请60秒后再试');
+            }
+            
+            // 记录本次发送
+            $rateData[$targetHash][] = $now;
+            @file_put_contents($rateFile, json_encode($rateData), LOCK_EX);
         }
     }
 }
