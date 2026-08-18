@@ -70,43 +70,19 @@ if ($enableUpstreamHide) {
         'upstream_price', 'upstream_cycle', 'zjmf_api_id', 'upstream_auto_setup',
     ];
 
-    // 上游信息嘲讽文案
-    $upstreamTaunts = [
-        '不给你看上游气不气',
-        '上游信息已隐藏，你猜猜是谁',
-        '想知道上游？做梦吧',
-        '上游是谁？你猜啊',
-        '上游信息属于商业机密，不对外公开',
-        '别打上游的主意了，你找不到的',
-        '上游信息已脱敏，请勿窥探',
-        '你永远不知道我们的上游是谁',
-    ];
-
     $upstreamReplaceValues = [
         'api_type' => 'normal', 'zjmf_api_id' => 0, 'upstream_pid' => 0,
         'upstream_version' => 0, 'upstream_auto_setup' => '',
         'upstream_ontrial_status' => 0, 'upstream_stock_control' => 0,
         'upstream_qty' => 0, 'upstream_price' => '0.00',
-        'upstream_cycle' => $upstreamTaunts[array_rand($upstreamTaunts)],
+        'upstream_cycle' => zjmfGetTaunt('upstream'),
         'upstream_price_type' => null,
-        'upstream_price_value' => $upstreamTaunts[array_rand($upstreamTaunts)],
+        'upstream_price_value' => zjmfGetTaunt('upstream'),
     ];
 
     function upstreamHideCleanArray(&$data, $hideFields, $replaceValues)
     {
         if (!is_array($data)) return;
-        
-        // 嘲讽文案（用于替换上游信息）
-        $taunts = [
-            '不给你看上游气不气',
-            '上游信息已隐藏，你猜猜是谁',
-            '想知道上游？做梦吧',
-            '上游是谁？你猜啊',
-            '上游信息属于商业机密，不对外公开',
-            '别打上游的主意了，你找不到的',
-            '上游信息已脱敏，请勿窥探',
-            '你永远不知道我们的上游是谁',
-        ];
         
         foreach ($data as $key => &$value) {
             if (is_array($value)) {
@@ -115,11 +91,11 @@ if ($enableUpstreamHide) {
             $strKey = (string)$key;
             if (in_array($strKey, $hideFields, true)) {
                 if ($strKey === 'upstream_product_shopping_url') {
-                    $data[$key] = $taunts[array_rand($taunts)];
+                    $data[$key] = zjmfGetTaunt('upstream');
                 } elseif (isset($replaceValues[$strKey])) {
                     $data[$key] = $replaceValues[$strKey];
                 } else {
-                    $data[$key] = $taunts[array_rand($taunts)];
+                    $data[$key] = zjmfGetTaunt('upstream');
                 }
             }
             if ($strKey === 'upstream_id' && is_numeric($value) && $value != 0) {
@@ -571,113 +547,7 @@ function zjmfBlockResponse($customMsg = '', $attackType = '')
     if (!empty($customMsg)) {
         $msg = $customMsg;
     } else {
-        // 按攻击类型返回不同的嘲讽信息
-        $taunts = [
-            // 0元购
-            'zero_cost' => [
-                '你0元购你妈逼呢，小乐子，被我拦下来了吧哈哈哈',
-                '小朋友，0元购是违法的哦，已割掉你的牛子',
-                '检测到白嫖狗一只，拦截成功',
-                '零元购你是来搞笑的吧',
-                '抱歉，本店不支持乞丐模式',
-                '温馨提示：免费的东西最贵，比如你的时间',
-            ],
-            // 改密绕过
-            'password_bypass' => [
-                '想改别人密码？先把你自己的脑子改改吧',
-                '不带旧密码就想改密？你是在做梦吗',
-                '检测到密码修改绕过尝试，你是不是觉得管理员是傻子',
-                '没有旧密码就想改密，你是来送人头的吧',
-                '密码修改需要旧密码，这不是常识吗',
-            ],
-            // 图形验证码绕过
-            'captcha_bypass' => [
-                '没有图形验证码就想操作？你是在逗我吗',
-                '图形验证码都不填就想通过？你是不是太天真了',
-                '检测到图形验证码绕过尝试，你的小把戏被发现了',
-                '没有图形验证码，你连门都进不来',
-                '图形验证码是干嘛的？就是防你这种人的',
-                '想绕过图形验证码？你还不够格',
-            ],
-            // SQL注入
-            'sql_injection' => [
-                'SQL注入？你是从2010年穿越来的吗',
-                '检测到SQL注入攻击，你的技术还停留在上个世纪',
-                '想注入？先把你的注入语法学学好吧',
-                'SQL注入已经被我们拦截了，你还是放弃吧',
-                '你的注入 payload 太垃圾了，我都懒得看',
-            ],
-            // 开放重定向
-            'open_redirect' => [
-                '想把用户跳转到你那儿？做梦吧',
-                '检测到开放重定向攻击，你的钓鱼网站暴露了',
-                'redirect_url 只允许站内跳转，你死心吧',
-                '想偷登录令牌？你还不够格',
-            ],
-            // 短信/邮件轰炸
-            'sms_bomb' => [
-                '想发短信轰炸？先过图形验证码这关吧',
-                '没有图形验证码就想发短信？你是在浪费大家时间',
-                '检测到短信轰炸尝试，你的手机号已经被记录了',
-                '图形验证码都不过就想发短信？你是来搞笑的吧',
-            ],
-            // 频率限制
-            'rate_limit' => [
-                '发太快了，休息一下吧，你累不累啊',
-                '60秒内只能发这么多，你急什么急',
-                '检测到频率超限，你是在测试我们的限流吗',
-                '慢慢来，别着急，验证码又不会跑掉',
-            ],
-            // 路径遍历
-            'path_traversal' => [
-                '想读取系统文件？你是在做梦吗',
-                '检测到路径遍历攻击，你是不是觉得我们服务器是裸奔的',
-                '../ 你以为很有用？我们早防着了',
-                '想穿越目录？你穿越剧看多了吧',
-            ],
-            // XSS攻击
-            'xss' => [
-                '想注入脚本？你是在侮辱我们的安全防护吗',
-                '检测到XSS攻击，你的 alert() 弹不出来的',
-                'XSS？你以为我们会让你的脚本跑起来？',
-                '想偷cookie？你还不够格',
-            ],
-            // 暴力破解
-            'brute_force' => [
-                '密码错误太多次了，你是在猜密码吗',
-                '检测到暴力破解尝试，你的IP已经被记录了',
-                '猜密码？你不如去买彩票',
-                '暴力破解是最低级的攻击方式，你也就这点水平',
-            ],
-            // 文件上传攻击
-            'file_upload' => [
-                '想上传恶意文件？你是在做梦吗',
-                '检测到文件上传攻击，你的webshell传不上来的',
-                '文件类型不合法，你以为我们会让你传可执行文件？',
-                '想传木马？你还是省省吧',
-            ],
-            // 命令注入
-            'command_injection' => [
-                '想执行系统命令？你是在搞笑吗',
-                '检测到命令注入攻击，你是不是觉得我们服务器是裸奔的',
-                '命令注入？你以为我们会让你跑命令？',
-                '想反弹shell？你还不够格',
-            ],
-        ];
-
-        // 根据攻击类型选择嘲讽信息
-        if (!empty($attackType) && isset($taunts[$attackType])) {
-            $msg = $taunts[$attackType][array_rand($taunts[$attackType])];
-        } else {
-            // 默认嘲讽信息（未知攻击类型）
-            $defaultTaunts = [
-                '检测到异常请求，已拦截',
-                '你的攻击被发现了，要不要找叔叔喝杯茶',
-                '你的智商似乎不足以完成这次攻击',
-                '别白费力气了，我们有防护',
-            ];
-            $msg = $defaultTaunts[array_rand($defaultTaunts)];
-        }
+        $msg = zjmfGetTaunt($attackType);
     }
 
     echo json_encode(array(
@@ -685,4 +555,135 @@ function zjmfBlockResponse($customMsg = '', $attackType = '')
         'msg' => $msg,
     ), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
+}
+
+// ============================================================
+// 嘲讽文案配置（统一管理）
+// ============================================================
+
+/**
+ * 获取随机嘲讽文案
+ * @param string $type 攻击类型
+ * @return string 随机嘲讽文案
+ */
+function zjmfGetTaunt($type = '')
+{
+    // 所有嘲讽文案集中在这里管理
+    $taunts = [
+        // 0元购
+        'zero_cost' => [
+            '你0元购你妈逼呢，小乐子，被我拦下来了吧哈哈哈',
+            '小朋友，0元购是违法的哦，已割掉你的牛子',
+            '检测到白嫖狗一只，拦截成功',
+            '零元购你是来搞笑的吧',
+            '抱歉，本店不支持乞丐模式',
+            '温馨提示：免费的东西最贵，比如你的时间',
+        ],
+        // 改密绕过
+        'password_bypass' => [
+            '想改别人密码？先把你自己的脑子改改吧',
+            '不带旧密码就想改密？你是在做梦吗',
+            '检测到密码修改绕过尝试，你是不是觉得管理员是傻子',
+            '没有旧密码就想改密，你是来送人头的吧',
+            '密码修改需要旧密码，这不是常识吗',
+        ],
+        // 图形验证码绕过
+        'captcha_bypass' => [
+            '没有图形验证码就想操作？你是在逗我吗',
+            '图形验证码都不填就想通过？你是不是太天真了',
+            '检测到图形验证码绕过尝试，你的小把戏被发现了',
+            '没有图形验证码，你连门都进不来',
+            '图形验证码是干嘛的？就是防你这种人的',
+            '想绕过图形验证码？你还不够格',
+        ],
+        // SQL注入
+        'sql_injection' => [
+            'SQL注入？你是从2010年穿越来的吗',
+            '检测到SQL注入攻击，你的技术还停留在上个世纪',
+            '想注入？先把你的注入语法学学好吧',
+            'SQL注入已经被我们拦截了，你还是放弃吧',
+            '你的注入 payload 太垃圾了，我都懒得看',
+        ],
+        // 开放重定向
+        'open_redirect' => [
+            '想把用户跳转到你那儿？做梦吧',
+            '检测到开放重定向攻击，你的钓鱼网站暴露了',
+            'redirect_url 只允许站内跳转，你死心吧',
+            '想偷登录令牌？你还不够格',
+        ],
+        // 短信/邮件轰炸
+        'sms_bomb' => [
+            '想发短信轰炸？先过图形验证码这关吧',
+            '没有图形验证码就想发短信？你是在浪费大家时间',
+            '检测到短信轰炸尝试，你的手机号已经被记录了',
+            '图形验证码都不过就想发短信？你是来搞笑的吧',
+        ],
+        // 频率限制
+        'rate_limit' => [
+            '发太快了，休息一下吧，你累不累啊',
+            '60秒内只能发这么多，你急什么急',
+            '检测到频率超限，你是在测试我们的限流吗',
+            '慢慢来，别着急，验证码又不会跑掉',
+        ],
+        // 路径遍历
+        'path_traversal' => [
+            '想读取系统文件？你是在做梦吗',
+            '检测到路径遍历攻击，你是不是觉得我们服务器是裸奔的',
+            '../ 你以为很有用？我们早防着了',
+            '想穿越目录？你穿越剧看多了吧',
+        ],
+        // XSS攻击
+        'xss' => [
+            '想注入脚本？你是在侮辱我们的安全防护吗',
+            '检测到XSS攻击，你的 alert() 弹不出来的',
+            'XSS？你以为我们会让你的脚本跑起来？',
+            '想偷cookie？你还不够格',
+        ],
+        // 暴力破解
+        'brute_force' => [
+            '密码错误太多次了，你是在猜密码吗',
+            '检测到暴力破解尝试，你的IP已经被记录了',
+            '猜密码？你不如去买彩票',
+            '暴力破解是最低级的攻击方式，你也就这点水平',
+        ],
+        // 文件上传攻击
+        'file_upload' => [
+            '想上传恶意文件？你是在做梦吗',
+            '检测到文件上传攻击，你的webshell传不上来的',
+            '文件类型不合法，你以为我们会让你传可执行文件？',
+            '想传木马？你还是省省吧',
+        ],
+        // 命令注入
+        'command_injection' => [
+            '想执行系统命令？你是在搞笑吗',
+            '检测到命令注入攻击，你是不是觉得我们服务器是裸奔的',
+            '命令注入？你以为我们会让你跑命令？',
+            '想反弹shell？你还不够格',
+        ],
+        // 上游信息隐藏
+        'upstream' => [
+            '不给你看上游气不气',
+            '上游信息已隐藏，你猜猜是谁',
+            '想知道上游？做梦吧',
+            '上游是谁？你猜啊',
+            '上游信息属于商业机密，不对外公开',
+            '别打上游的主意了，你找不到的',
+            '上游信息已脱敏，请勿窥探',
+            '你永远不知道我们的上游是谁',
+        ],
+        // 默认（未知攻击类型）
+        'default' => [
+            '检测到异常请求，已拦截',
+            '你的攻击被发现了，要不要找叔叔喝杯茶',
+            '你的智商似乎不足以完成这次攻击',
+            '别白费力气了，我们有防护',
+        ],
+    ];
+
+    // 根据类型返回随机嘲讽
+    if (!empty($type) && isset($taunts[$type])) {
+        return $taunts[$type][array_rand($taunts[$type])];
+    }
+    
+    return $taunts['default'][array_rand($taunts['default'])];
 }
