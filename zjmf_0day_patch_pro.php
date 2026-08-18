@@ -269,11 +269,20 @@ if ($mfcwIsSqlVulnerable) {
         '/**/', '/*!',
     ];
 
+    // 排除的参数（密码、验证码等可能包含特殊字符的字段）
+    $excludeParams = [
+        'password', 'old_password', 'new_password', 'repassword',
+        'checkPassword', 'confirm_password', 'captcha', 'code',
+        'sms_code', 'phone_code', 'email_code', 'verify_code',
+    ];
+
     $mfcwBlocked = false;
     $blockedParam = '';
 
     foreach ($mfcwAllParams as $key => $value) {
         if (!is_string($value)) continue;
+        // 跳过排除的参数
+        if (in_array($key, $excludeParams)) continue;
         $valueUpper = strtoupper($value);
         foreach ($sqlInjectionPatterns as $pattern) {
             if (strpos($valueUpper, strtoupper($pattern)) !== false) {
