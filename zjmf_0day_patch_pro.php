@@ -235,7 +235,7 @@ if ($mfcwIsCheckout && $mfcwMethod === 'POST') {
     foreach ($dangerousPriceParams as $param) {
         if (array_key_exists($param, $mfcwAllParams)) {
             zjmfLogAttack('zero_cost', $mfcwAllParams);
-            zjmfBlockResponse();
+            zjmfBlockResponse('', 'zero_cost');
         }
     }
 }
@@ -302,7 +302,7 @@ if ($mfcwIsSqlVulnerable) {
 
     if ($mfcwBlocked) {
         zjmfLogAttack('sql_injection', array_merge($mfcwAllParams, ['_blocked_param' => $blockedParam]));
-        zjmfBlockResponse('检测到SQL注入攻击，已记录');
+        zjmfBlockResponse('', 'sql_injection');
     }
 }
 
@@ -325,14 +325,14 @@ if ($mfcwIsRegister && $mfcwMethod === 'POST') {
         
         if (empty($captcha) || empty($idtoken)) {
             zjmfLogAttack('register_captcha_bypass', $mfcwAllParams);
-            zjmfBlockResponse('注册需要图形验证码');
+            zjmfBlockResponse('', 'captcha_bypass');
         }
         
         // 直接验证图形验证码（绕过 hook）
         $captchaObj = new \think\captcha\Captcha((array) \think\facade\Config::pull('captcha'));
         if (!$captchaObj->check($captcha, $idtoken)) {
             zjmfLogAttack('register_captcha_wrong', $mfcwAllParams);
-            zjmfBlockResponse('图形验证码错误');
+            zjmfBlockResponse('', 'captcha_bypass');
         }
     }
 }
@@ -358,14 +358,14 @@ if ($mfcwIsSendCode && $mfcwMethod === 'POST') {
         
         if (empty($captcha) || empty($idtoken)) {
             zjmfLogAttack('sms_bomb', $mfcwAllParams);
-            zjmfBlockResponse('发送验证码需要图形验证码');
+            zjmfBlockResponse('', 'sms_bomb');
         }
         
         // 直接验证图形验证码（绕过 hook）
         $captchaObj = new \think\captcha\Captcha((array) \think\facade\Config::pull('captcha'));
         if (!$captchaObj->check($captcha, $idtoken)) {
             zjmfLogAttack('sms_bomb_wrong_captcha', $mfcwAllParams);
-            zjmfBlockResponse('图形验证码错误');
+            zjmfBlockResponse('', 'captcha_bypass');
         }
     }
     
@@ -393,7 +393,7 @@ if ($mfcwIsSendCode && $mfcwMethod === 'POST') {
             $count = isset($rateData[$targetHash]) ? count($rateData[$targetHash]) : 0;
             if ($count >= $smsRateLimit) {
                 zjmfLogAttack('sms_rate_limit', ['target' => $target, 'count' => $count]);
-                zjmfBlockResponse('发送频率过高，请60秒后再试');
+                zjmfBlockResponse('', 'rate_limit');
             }
             
             // 记录本次发送
@@ -419,7 +419,7 @@ if ($mfcwIsPasswordChange && $mfcwMethod === 'POST') {
     // flag != 1 时跳过旧密码验证，这是漏洞
     if ($flag !== 1 && empty($oldPassword)) {
         zjmfLogAttack('password_bypass', ['flag' => $flag, 'path' => $mfcwPath]);
-        zjmfBlockResponse('检测到密码修改绕过尝试，需要旧密码');
+        zjmfBlockResponse('', 'password_bypass');
     }
 }
 
@@ -462,7 +462,7 @@ if (!empty($mfcwRedirectUrl)) {
 
     if (!$isAllowed) {
         zjmfLogAttack('open_redirect', ['redirect_url' => $mfcwRedirectUrl]);
-        zjmfBlockResponse('检测到开放重定向攻击');
+        zjmfBlockResponse('', 'open_redirect');
     }
 }
 
@@ -535,7 +535,7 @@ function zjmfLogAttack($type, $params)
     @file_put_contents($logFile, $logEntry . PHP_EOL, FILE_APPEND | LOCK_EX);
 }
 
-function zjmfBlockResponse($customMsg = '')
+function zjmfBlockResponse($customMsg = '', $attackType = '')
 {
     if (function_exists('http_response_code')) {
         http_response_code(400);
@@ -548,17 +548,77 @@ function zjmfBlockResponse($customMsg = '')
     if (!empty($customMsg)) {
         $msg = $customMsg;
     } else {
+        // 按攻击类型返回不同的嘲讽信息
         $taunts = [
-            '你0元购你妈逼呢，小乐子，被我拦下来了吧哈哈哈',
-            '小朋友，0元购是违法的哦，已割掉你的牛子',
-            '检测到白嫖狗一只，拦截成功',
-            '你的小把戏被发现了呢，要不要找叔叔请你喝杯茶',
-            '零元购你是来搞笑的吧',
-            '抱歉，本店不支持乞丐模式',
-            '你的智商似乎不足以完成这次攻击',
-            '温馨提示：免费的东西最贵，比如你的时间',
+            // 0元购
+            'zero_cost' => [
+                '你0元购你妈逼呢，小乐子，被我拦下来了吧哈哈哈',
+                '小朋友，0元购是违法的哦，已割掉你的牛子',
+                '检测到白嫖狗一只，拦截成功',
+                '零元购你是来搞笑的吧',
+                '抱歉，本店不支持乞丐模式',
+                '温馨提示：免费的东西最贵，比如你的时间',
+            ],
+            // 改密绕过
+            'password_bypass' => [
+                '想改别人密码？先把你自己的脑子改改吧',
+                '不带旧密码就想改密？你是在做梦吗',
+                '检测到密码修改绕过尝试，你是不是觉得管理员是傻子',
+                '没有旧密码就想改密，你是来送人头的吧',
+                '密码修改需要旧密码，这不是常识吗',
+            ],
+            // 验证码绕过（注册/发短信/邮件）
+            'captcha_bypass' => [
+                '没有验证码就想发短信？你是在逗我吗',
+                '验证码都不填就想注册？你是不是太天真了',
+                '检测到验证码绕过尝试，你的小把戏被发现了',
+                '没有图形验证码，你连门都进不来',
+                '验证码是干嘛的？就是防你这种人的',
+            ],
+            // SQL注入
+            'sql_injection' => [
+                'SQL注入？你是从2010年穿越来的吗',
+                '检测到SQL注入攻击，你的技术还停留在上个世纪',
+                '想注入？先把你的注入语法学学好吧',
+                'SQL注入已经被我们拦截了，你还是放弃吧',
+                '你的注入 payload 太垃圾了，我都懒得看',
+            ],
+            // 开放重定向
+            'open_redirect' => [
+                '想把用户跳转到你那儿？做梦吧',
+                '检测到开放重定向攻击，你的钓鱼网站暴露了',
+                'redirect_url 只允许站内跳转，你死心吧',
+                '想偷登录令牌？你还不够格',
+            ],
+            // 短信/邮件轰炸
+            'sms_bomb' => [
+                '想发短信轰炸？先过图形验证码这关吧',
+                '没有验证码就想发短信？你是在浪费大家时间',
+                '检测到短信轰炸尝试，你的手机号已经被记录了',
+                '验证码都不过就想发短信？你是来搞笑的吧',
+            ],
+            // 频率限制
+            'rate_limit' => [
+                '发太快了，休息一下吧，你累不累啊',
+                '60秒内只能发这么多，你急什么急',
+                '检测到频率超限，你是在测试我们的限流吗',
+                '慢慢来，别着急，验证码又不会跑掉',
+            ],
         ];
-        $msg = $taunts[array_rand($taunts)];
+
+        // 根据攻击类型选择嘲讽信息
+        if (!empty($attackType) && isset($taunts[$attackType])) {
+            $msg = $taunts[$attackType][array_rand($taunts[$attackType])];
+        } else {
+            // 默认嘲讽信息（未知攻击类型）
+            $defaultTaunts = [
+                '检测到异常请求，已拦截',
+                '你的攻击被发现了，要不要找叔叔喝杯茶',
+                '你的智商似乎不足以完成这次攻击',
+                '别白费力气了，我们有防护',
+            ];
+            $msg = $defaultTaunts[array_rand($defaultTaunts)];
+        }
     }
 
     echo json_encode(array(
