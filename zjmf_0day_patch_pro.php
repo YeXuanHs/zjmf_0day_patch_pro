@@ -3,9 +3,13 @@
  * zjmf_0day_patch_pro（魔方财务漏洞修复补丁 Pro版）
  * 
  * 功能：
- * 1. 拦截零元购漏洞（resource_percent_value 等价格操控参数）
- * 2. 拦截SQL注入漏洞（keywords、account、search_desc 等）
- * 3. 可选关闭整个 /v1 目录
+ * 1. 零元购漏洞拦截（resource_percent_value 等价格操控参数）
+ * 2. SQL注入防护（keywords、account 等）
+ * 3. 注册验证码强制（图形验证码 + 短信/邮箱验证码）
+ * 4. 改密安全加固（拦截未携带旧密码的请求）
+ * 5. 开放重定向防护（redirect_url 仅允许站内域名）
+ * 6. 上游信息隐藏（ob_start 过滤）
+ * 7. 可选关闭整个 /v1 目录
  * 
  * 加载方式：在 /public/index.php 的 require base.php 之后加一行：
  * require CMF_ROOT . 'zjmf_0day_patch_pro.php';
@@ -18,59 +22,158 @@
 // 是否关闭整个 /v1 目录（true=关闭，false=保留）
 $disableV1 = false;
 
+// 是否启用上游信息隐藏（true=启用，false=关闭）
+$enableUpstreamHide = true;
+
+// 允许的站内域名（开放重定向防护白名单）
+$allowedDomains = [
+    $_SERVER['HTTP_HOST'] ?? '',
+    'www.' . ($_SERVER['HTTP_HOST'] ?? ''),
+];
+
 // ============================================================
 
 if (PHP_SAPI === 'cli') {
     return;
 }
 
-// ---------- 功能1：关闭 /v1 目录（可选） ----------
-if ($disableV1) {
-    $mfcwPath = parse_url(
-        (string)(isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '/'),
-        PHP_URL_PATH
-    );
-
-    if (!is_string($mfcwPath) || $mfcwPath === '') {
-        $mfcwPath = '/';
-    }
-
-    for ($round = 0; $round < 3; $round++) {
-        $decoded = rawurldecode($mfcwPath);
-        if ($decoded === $mfcwPath) {
-            break;
-        }
-        $mfcwPath = $decoded;
-    }
-
-    $mfcwPath = str_replace('\\', '/', $mfcwPath);
-    $mfcwPath = preg_replace('#/+#', '/', $mfcwPath);
-    $mfcwPath = preg_replace('#^/index\.php/#i', '/', $mfcwPath);
-    $mfcwPath = rtrim($mfcwPath, '/');
-
-    if (preg_match('#^/v1(?:/|$)#i', $mfcwPath) === 1) {
-        http_response_code(404);
-        header('Content-Type: application/json; charset=utf-8');
-        header('Cache-Control: no-store');
-        echo json_encode(
-            ['status' => 404, 'msg' => 'Not Found'],
-            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-        );
-        exit;
-    }
+if (!defined('CMF_ROOT')) {
+    return;
 }
 
-// ---------- 获取请求信息 ----------
+// ============================================================
+// 1. 上游信息隐藏（ob_start）
+// ============================================================
+if ($enableUpstreamHide) {
+    @ini_set('zlib.output_compression', 'Off');
+    if (function_exists('apache_setenv')) {
+        @apache_setenv('no-gzip', '1');
+    }
+
+    $upstreamHideWhitelist = [];
+    $dbConfigPath = CMF_ROOT . 'app/config/database.php';
+    if (file_exists($dbConfigPath)) {
+        $dbConfig = include $dbConfigPath;
+        if (is_array($dbConfig) && !empty($dbConfig['admin_application'])) {
+            $upstreamHideWhitelist[] = '/' . $dbConfig['admin_application'] . '/';
+            $upstreamHideWhitelist[] = '/' . $dbConfig['admin_application'];
+        }
+    }
+
+    $upstreamHideFields = [
+        'api_type', 'upstream_product_shopping_url', 'upstream_pid',
+        'upstream_version', 'upstream_price_type', 'upstream_price_value',
+        'upstream_qty', 'upstream_stock_control', 'upstream_ontrial_status',
+        'upstream_price', 'upstream_cycle', 'zjmf_api_id', 'upstream_auto_setup',
+    ];
+
+    $upstreamReplaceValues = [
+        'api_type' => 'normal', 'zjmf_api_id' => 0, 'upstream_pid' => 0,
+        'upstream_version' => 0, 'upstream_auto_setup' => '',
+        'upstream_ontrial_status' => 0, 'upstream_stock_control' => 0,
+        'upstream_qty' => 0, 'upstream_price' => '0.00',
+        'upstream_cycle' => '', 'upstream_price_type' => null,
+        'upstream_price_value' => null,
+    ];
+
+    function upstreamHideCleanArray(&$data, $hideFields, $replaceValues)
+    {
+        if (!is_array($data)) return;
+        foreach ($data as $key => &$value) {
+            if (is_array($value)) {
+                upstreamHideCleanArray($value, $hideFields, $replaceValues);
+            }
+            $strKey = (string)$key;
+            if (in_array($strKey, $hideFields, true)) {
+                if ($strKey === 'upstream_product_shopping_url') {
+                    $data[$key] = null;
+                } elseif (isset($replaceValues[$strKey])) {
+                    $data[$key] = $replaceValues[$strKey];
+                } else {
+                    unset($data[$key]);
+                }
+            }
+            if ($strKey === 'upstream_id' && is_numeric($value) && $value != 0) {
+                $data[$key] = 0;
+            }
+            if ($strKey === 'upper_reaches_id' && is_numeric($value) && $value != 0) {
+                $data[$key] = 0;
+            }
+        }
+        unset($value);
+    }
+
+    function upstreamHideTryDecompress($buffer)
+    {
+        if (strlen($buffer) < 2) return $buffer;
+        $b0 = ord($buffer[0]);
+        $b1 = isset($buffer[1]) ? ord($buffer[1]) : 0;
+        if ($b0 === 0x1f && $b1 === 0x8b) {
+            $decoded = @gzdecode($buffer);
+            if ($decoded !== false) return $decoded;
+        }
+        if ($b0 === 0x78 && ($b1 === 0x01 || $b1 === 0x5e || $b1 === 0x9c)) {
+            $decoded = @gzuncompress($buffer);
+            if ($decoded !== false) return $decoded;
+        }
+        if (version_compare(PHP_VERSION, '7.4', '<')) {
+            if (function_exists('inflate_init') && function_exists('inflate_add')) {
+                $context = @inflate_init(ZLIB_ENCODING_DEFLATE);
+                if ($context !== false) {
+                    $decoded = @inflate_add($context, $buffer);
+                    if ($decoded !== false) return $decoded;
+                }
+            }
+        } else {
+            $decoded = @gzinflate($buffer);
+            if ($decoded !== false) return $decoded;
+        }
+        return $buffer;
+    }
+
+    function upstreamHideFilter($buffer)
+    {
+        global $upstreamHideFields, $upstreamReplaceValues, $upstreamHideWhitelist;
+        if (!empty($upstreamHideWhitelist)) {
+            $requestUri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '';
+            if (!empty($requestUri)) {
+                foreach ($upstreamHideWhitelist as $whitelistPath) {
+                    if (stripos($requestUri, $whitelistPath) !== false) return $buffer;
+                }
+            }
+        }
+        if (empty($buffer)) return $buffer;
+        $rawBuffer = $buffer;
+        $trimmed = trim($buffer);
+        if (strlen($trimmed) < 2) return $buffer;
+        $firstChar = $trimmed[0];
+        if ($firstChar !== '{' && $firstChar !== '[') {
+            $buffer = upstreamHideTryDecompress($rawBuffer);
+            $trimmed = trim($buffer);
+            if (strlen($trimmed) < 2 || ($trimmed[0] !== '{' && $trimmed[0] !== '[')) {
+                return $rawBuffer;
+            }
+        }
+        $json = json_decode($trimmed, true);
+        if (json_last_error() !== JSON_ERROR_NONE) return $rawBuffer;
+        if (!is_array($json)) return $rawBuffer;
+        upstreamHideCleanArray($json, $upstreamHideFields, $upstreamReplaceValues);
+        $newBuffer = json_encode($json, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
+        return ($newBuffer !== false) ? $newBuffer : $rawBuffer;
+    }
+
+    ob_start('upstreamHideFilter');
+}
+
+// ============================================================
+// 2. 获取请求信息
+// ============================================================
 $mfcwMethod = strtoupper((string)(isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET'));
 $mfcwPath = parse_url(
     (string)(isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '/'),
     PHP_URL_PATH
 );
-
-if (!is_string($mfcwPath) || $mfcwPath === '') {
-    $mfcwPath = '/';
-}
-
+if (!is_string($mfcwPath) || $mfcwPath === '') $mfcwPath = '/';
 $mfcwPath = preg_replace('#^/index\.php#i', '', $mfcwPath);
 $mfcwPath = '/' . trim($mfcwPath, '/');
 
@@ -79,18 +182,40 @@ $mfcwStatusCart = isset($_GET['statuscart']) ? $_GET['statuscart'] : (isset($_PO
 
 // 读取 JSON body
 $mfcwJsonBody = null;
-$mfcwRawBody = '';
 if (strpos(strtolower((string)(isset($_SERVER['CONTENT_TYPE']) ? $_SERVER['CONTENT_TYPE'] : '')), 'application/json') !== false) {
     $mfcwRawBody = file_get_contents('php://input');
     if (is_string($mfcwRawBody) && $mfcwRawBody !== '') {
         $mfcwJsonBody = json_decode($mfcwRawBody, true);
     }
 }
-
-// 合并所有参数
 $mfcwAllParams = array_merge($_GET, $_POST, is_array($mfcwJsonBody) ? $mfcwJsonBody : []);
 
-// ---------- 功能2：拦截零元购漏洞 ----------
+// ============================================================
+// 3. 可选关闭 /v1 目录
+// ============================================================
+if ($disableV1) {
+    $mfcwV1Path = $mfcwPath;
+    for ($round = 0; $round < 3; $round++) {
+        $decoded = rawurldecode($mfcwV1Path);
+        if ($decoded === $mfcwV1Path) break;
+        $mfcwV1Path = $decoded;
+    }
+    $mfcwV1Path = str_replace('\\', '/', $mfcwV1Path);
+    $mfcwV1Path = preg_replace('#/+#', '/', $mfcwV1Path);
+    $mfcwV1Path = rtrim($mfcwV1Path, '/');
+
+    if (preg_match('#^/v1(?:/|$)#i', $mfcwV1Path) === 1) {
+        http_response_code(404);
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store');
+        echo json_encode(['status' => 404, 'msg' => 'Not Found'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+}
+
+// ============================================================
+// 4. 零元购漏洞拦截
+// ============================================================
 $mfcwIsCheckout = (
     $mfcwPath === '/cart'
     && $mfcwAction === 'viewcart'
@@ -100,37 +225,28 @@ $mfcwIsCheckout = (
 
 if ($mfcwIsCheckout && $mfcwMethod === 'POST') {
     $dangerousPriceParams = [
-        'resource_percent_value',
-        'resource_percent',
-        'percent_value',
-        'discount_percent',
-        'price_percent',
-        'custom_price',
-        'override_price',
-        'price_override',
-        'amount_override',
+        'resource_percent_value', 'resource_percent', 'percent_value',
+        'discount_percent', 'price_percent', 'custom_price',
+        'override_price', 'price_override', 'amount_override',
     ];
-
-    $mfcwBlocked = false;
     foreach ($dangerousPriceParams as $param) {
         if (array_key_exists($param, $mfcwAllParams)) {
-            $mfcwBlocked = true;
-            break;
+            zjmfLogAttack('zero_cost', $mfcwAllParams);
+            zjmfBlockResponse();
         }
-    }
-
-    if ($mfcwBlocked) {
-        logAttack('zero_cost', $mfcwAllParams);
-        blockResponse();
     }
 }
 
-// ---------- 功能3：拦截SQL注入漏洞 ----------
+// ============================================================
+// 5. SQL注入防护
+// ============================================================
 $mfcwIsSqlVulnerable = (
     $mfcwPath === '/v1/funds'
     || $mfcwPath === '/v1/login'
     || $mfcwPath === '/v1/login_api'
     || $mfcwPath === '/login'
+    || $mfcwPath === '/v1/register'
+    || $mfcwPath === '/register'
     || $mfcwPath === '/v1/affiliates'
     || $mfcwPath === '/v1/affiliates/record'
     || $mfcwPath === '/v1/affiliates/withdraw_record'
@@ -139,12 +255,12 @@ $mfcwIsSqlVulnerable = (
 if ($mfcwIsSqlVulnerable) {
     $sqlInjectionPatterns = [
         "'", '"', ';', '--', '#', '/*', '*/',
-        ' OR ', ' AND ', ' UNION ', ' SELECT ', ' INSERT ', 
-        ' UPDATE ', ' DELETE ', ' DROP ', ' TRUNCATE ', ' ALTER ', 
+        ' OR ', ' AND ', ' UNION ', ' SELECT ', ' INSERT ',
+        ' UPDATE ', ' DELETE ', ' DROP ', ' TRUNCATE ', ' ALTER ',
         ' CREATE ', ' EXEC ', ' EXECUTE ',
-        ' SLEEP(', ' BENCHMARK(', ' WAITFOR ', 
-        ' EXTRACTVALUE(', ' UPDATEXML(', ' LOAD_FILE(', 
-        ' INTO OUTFILE', ' INTO DUMPFILE',
+        ' SLEEP(', ' BENCHMARK(', ' WAITFOR ',
+        ' EXTRACTVALUE(', ' UPDATEXML(', ' LOAD_FILE(',
+        ' INTO OUTFILE', ' INTO DUMPFILE', ' INFORMATION_SCHEMA',
         '/**/', '/*!',
     ];
 
@@ -163,20 +279,18 @@ if ($mfcwIsSqlVulnerable) {
         }
     }
 
-    // 特别检查 keywords 参数
     if (isset($mfcwAllParams['keywords'])) {
         $kw = $mfcwAllParams['keywords'];
-        if (preg_match('/[\'";\\\\]/', $kw) || 
+        if (preg_match('/[\'";\\\\]/', $kw) ||
             preg_match('/\b(OR|AND|UNION|SELECT|INSERT|UPDATE|DELETE|DROP)\b/i', $kw)) {
             $mfcwBlocked = true;
             $blockedParam = 'keywords';
         }
     }
 
-    // 特别检查 account 参数（登录接口）
     if (isset($mfcwAllParams['account'])) {
         $acc = $mfcwAllParams['account'];
-        if (preg_match('/[\'";\\\\]/', $acc) || 
+        if (preg_match('/[\'";\\\\]/', $acc) ||
             preg_match('/\b(OR|AND|UNION|SELECT)\b/i', $acc)) {
             $mfcwBlocked = true;
             $blockedParam = 'account';
@@ -184,8 +298,109 @@ if ($mfcwIsSqlVulnerable) {
     }
 
     if ($mfcwBlocked) {
-        logAttack('sql_injection', array_merge($mfcwAllParams, ['_blocked_param' => $blockedParam]));
-        blockResponse('检测到SQL注入攻击，已记录');
+        zjmfLogAttack('sql_injection', array_merge($mfcwAllParams, ['_blocked_param' => $blockedParam]));
+        zjmfBlockResponse('检测到SQL注入攻击，已记录');
+    }
+}
+
+// ============================================================
+// 6. 注册验证码强制
+// ============================================================
+$mfcwIsRegister = (
+    $mfcwPath === '/v1/register'
+    || $mfcwPath === '/register'
+    || ($mfcwPath === '/login' && $mfcwAction === 'register')
+);
+
+if ($mfcwIsRegister && $mfcwMethod === 'POST') {
+    // 检查图形验证码
+    $isCaptcha = configuration('is_captcha');
+    if ($isCaptcha == 1) {
+        $hasCaptcha = !empty($mfcwAllParams['captcha']) && !empty($mfcwAllParams['idtoken']);
+        if (!$hasCaptcha) {
+            zjmfLogAttack('register_no_captcha', $mfcwAllParams);
+            zjmfBlockResponse('注册需要图形验证码');
+        }
+    }
+
+    // 检查短信/邮箱验证码
+    $hasSmsCode = !empty($mfcwAllParams['sms_code']) || !empty($mfcwAllParams['code']);
+    $hasPhone = !empty($mfcwAllParams['phone']) || !empty($mfcwAllParams['phonenumber']);
+    $hasEmail = !empty($mfcwAllParams['email']);
+
+    // 如果有手机号但没有短信验证码
+    if ($hasPhone && !$hasSmsCode) {
+        zjmfLogAttack('register_no_sms_code', $mfcwAllParams);
+        zjmfBlockResponse('注册需要短信验证码');
+    }
+
+    // 如果有邮箱但没有邮箱验证码
+    if ($hasEmail && !$hasSmsCode) {
+        zjmfLogAttack('register_no_email_code', $mfcwAllParams);
+        zjmfBlockResponse('注册需要邮箱验证码');
+    }
+}
+
+// ============================================================
+// 7. 改密安全加固
+// ============================================================
+$mfcwIsPasswordChange = (
+    $mfcwPath === '/v1/password'
+    || $mfcwPath === '/modify_password'
+    || $mfcwPath === '/password'
+);
+
+if ($mfcwIsPasswordChange && $mfcwMethod === 'POST') {
+    $oldPassword = $mfcwAllParams['old_password'] ?? '';
+    $flag = isset($mfcwAllParams['flag']) ? intval($mfcwAllParams['flag']) : 0;
+
+    // flag != 1 时跳过旧密码验证，这是漏洞
+    if ($flag !== 1 && empty($oldPassword)) {
+        zjmfLogAttack('password_bypass', ['flag' => $flag, 'path' => $mfcwPath]);
+        zjmfBlockResponse('检测到密码修改绕过尝试，需要旧密码');
+    }
+}
+
+// ============================================================
+// 8. 开放重定向防护
+// ============================================================
+$mfcwRedirectUrl = $mfcwAllParams['redirect_url'] ?? $mfcwAllParams['redirect'] ?? $mfcwAllParams['return_url'] ?? '';
+
+if (!empty($mfcwRedirectUrl)) {
+    $isAllowed = false;
+
+    // 检查是否是相对路径
+    if (strpos($mfcwRedirectUrl, '/') === 0 && strpos($mfcwRedirectUrl, '//') !== 0) {
+        $isAllowed = true;
+    }
+
+    // 检查是否是允许的域名
+    if (!$isAllowed) {
+        $parsedUrl = parse_url($mfcwRedirectUrl);
+        if (!empty($parsedUrl['host'])) {
+            foreach ($allowedDomains as $domain) {
+                if (!empty($domain) && strtolower($parsedUrl['host']) === strtolower($domain)) {
+                    $isAllowed = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    // 检查协议相对绕过 //evil.com
+    if (!$isAllowed && strpos($mfcwRedirectUrl, '//') === 0) {
+        $domain = parse_url('https:' . $mfcwRedirectUrl, PHP_URL_HOST);
+        foreach ($allowedDomains as $allowedDomain) {
+            if (!empty($allowedDomain) && strtolower($domain) === strtolower($allowedDomain)) {
+                $isAllowed = true;
+                break;
+            }
+        }
+    }
+
+    if (!$isAllowed) {
+        zjmfLogAttack('open_redirect', ['redirect_url' => $mfcwRedirectUrl]);
+        zjmfBlockResponse('检测到开放重定向攻击');
     }
 }
 
@@ -193,18 +408,16 @@ if ($mfcwIsSqlVulnerable) {
 // 工具函数
 // ============================================================
 
-function logAttack($type, $params) {
-    // 从 cookies 中提取 JWT token 和用户信息
+function zjmfLogAttack($type, $params)
+{
     $userId = 'unknown';
     $userName = 'unknown';
     $jwtToken = '';
-    
-    // 从 Authorization header 获取 token
+
     if (!empty($_SERVER['HTTP_AUTHORIZATION'])) {
         $jwtToken = str_replace('JWT ', '', $_SERVER['HTTP_AUTHORIZATION']);
     }
-    
-    // 从 cookies 获取 token（ZJMF_ 开头的 cookie）
+
     if (empty($jwtToken)) {
         foreach ($_COOKIE as $key => $value) {
             if (strpos($key, 'ZJMF_') === 0 && !empty($value)) {
@@ -213,31 +426,24 @@ function logAttack($type, $params) {
             }
         }
     }
-    
-    // 解析 JWT payload 获取用户信息
+
     if (!empty($jwtToken)) {
         $parts = explode('.', $jwtToken);
         if (count($parts) === 3) {
             $payload = $parts[1];
-            // 补齐 base64 长度
             $payload = str_replace(['-', '_'], ['+', '/'], $payload);
             $payload .= str_repeat('=', 4 - strlen($payload) % 4);
             $decoded = base64_decode($payload);
             if ($decoded) {
                 $jwtData = json_decode($decoded, true);
-                if (isset($jwtData['userinfo']['id'])) {
-                    $userId = $jwtData['userinfo']['id'];
-                }
-                if (isset($jwtData['userinfo']['username'])) {
-                    $userName = $jwtData['userinfo']['username'];
-                }
+                if (isset($jwtData['userinfo']['id'])) $userId = $jwtData['userinfo']['id'];
+                if (isset($jwtData['userinfo']['username'])) $userName = $jwtData['userinfo']['username'];
             }
         }
     }
-    
-    // 获取 PHPSESSID
+
     $sessionId = $_COOKIE['PHPSESSID'] ?? 'unknown';
-    
+
     $logEntry = sprintf(
         "============ [security][%s] ============" . PHP_EOL .
         "时间: %s" . PHP_EOL .
@@ -262,13 +468,13 @@ function logAttack($type, $params) {
         (string)(isset($_SERVER['HTTP_REFERER']) ? $_SERVER['HTTP_REFERER'] : ''),
         json_encode($params, JSON_UNESCAPED_UNICODE)
     );
-    
-    // 保存到补丁同目录的 zjmf_security.log
+
     $logFile = __DIR__ . '/zjmf_security.log';
     @file_put_contents($logFile, $logEntry . PHP_EOL, FILE_APPEND | LOCK_EX);
 }
 
-function blockResponse($customMsg = '') {
+function zjmfBlockResponse($customMsg = '')
+{
     if (function_exists('http_response_code')) {
         http_response_code(400);
     } else {
