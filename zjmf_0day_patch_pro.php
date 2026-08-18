@@ -307,7 +307,38 @@ if ($mfcwIsSqlVulnerable) {
 }
 
 // ============================================================
-// 7. 短信/邮件轰炸防护（强制验证码校验）
+// 7. 注册验证码强制（防止绕过验证码注册）
+// ============================================================
+$mfcwIsRegister = (
+    $mfcwPath === '/v1/register'
+    || $mfcwPath === '/register'
+    || $mfcwPath === '/registerPhone'
+    || $mfcwPath === '/registerEmail'
+    || ($mfcwPath === '/login' && $mfcwAction === 'register')
+);
+
+if ($mfcwIsRegister && $mfcwMethod === 'POST') {
+    $isCaptcha = configuration('is_captcha');
+    if ($isCaptcha == 1) {
+        $captcha = $mfcwAllParams['captcha'] ?? '';
+        $idtoken = $mfcwAllParams['idtoken'] ?? '';
+        
+        if (empty($captcha) || empty($idtoken)) {
+            zjmfLogAttack('register_captcha_bypass', $mfcwAllParams);
+            zjmfBlockResponse('注册需要图形验证码');
+        }
+        
+        // 直接验证图形验证码（绕过 hook）
+        $captchaObj = new \think\captcha\Captcha((array) \think\facade\Config::pull('captcha'));
+        if (!$captchaObj->check($captcha, $idtoken)) {
+            zjmfLogAttack('register_captcha_wrong', $mfcwAllParams);
+            zjmfBlockResponse('图形验证码错误');
+        }
+    }
+}
+
+// ============================================================
+// 8. 短信/邮件轰炸防护（强制验证码校验）
 // ============================================================
 // 拦截所有发送验证码的接口
 $mfcwIsSendCode = (
@@ -373,7 +404,7 @@ if ($mfcwIsSendCode && $mfcwMethod === 'POST') {
 }
 
 // ============================================================
-// 8. 改密安全加固
+// 9. 改密安全加固
 // ============================================================
 $mfcwIsPasswordChange = (
     $mfcwPath === '/v1/password'
@@ -393,7 +424,7 @@ if ($mfcwIsPasswordChange && $mfcwMethod === 'POST') {
 }
 
 // ============================================================
-// 8. 开放重定向防护
+// 10. 开放重定向防护
 // ============================================================
 $mfcwRedirectUrl = $mfcwAllParams['redirect_url'] ?? $mfcwAllParams['redirect'] ?? $mfcwAllParams['return_url'] ?? '';
 
