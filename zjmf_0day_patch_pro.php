@@ -70,18 +70,44 @@ if ($enableUpstreamHide) {
         'upstream_price', 'upstream_cycle', 'zjmf_api_id', 'upstream_auto_setup',
     ];
 
+    // 上游信息嘲讽文案
+    $upstreamTaunts = [
+        '不给你看上游气不气',
+        '上游信息已隐藏，你猜猜是谁',
+        '想知道上游？做梦吧',
+        '上游是谁？你猜啊',
+        '上游信息属于商业机密，不对外公开',
+        '别打上游的主意了，你找不到的',
+        '上游信息已脱敏，请勿窥探',
+        '你永远不知道我们的上游是谁',
+    ];
+
     $upstreamReplaceValues = [
         'api_type' => 'normal', 'zjmf_api_id' => 0, 'upstream_pid' => 0,
         'upstream_version' => 0, 'upstream_auto_setup' => '',
         'upstream_ontrial_status' => 0, 'upstream_stock_control' => 0,
         'upstream_qty' => 0, 'upstream_price' => '0.00',
-        'upstream_cycle' => '', 'upstream_price_type' => null,
-        'upstream_price_value' => null,
+        'upstream_cycle' => $upstreamTaunts[array_rand($upstreamTaunts)],
+        'upstream_price_type' => null,
+        'upstream_price_value' => $upstreamTaunts[array_rand($upstreamTaunts)],
     ];
 
     function upstreamHideCleanArray(&$data, $hideFields, $replaceValues)
     {
         if (!is_array($data)) return;
+        
+        // 嘲讽文案（用于替换上游信息）
+        $taunts = [
+            '不给你看上游气不气',
+            '上游信息已隐藏，你猜猜是谁',
+            '想知道上游？做梦吧',
+            '上游是谁？你猜啊',
+            '上游信息属于商业机密，不对外公开',
+            '别打上游的主意了，你找不到的',
+            '上游信息已脱敏，请勿窥探',
+            '你永远不知道我们的上游是谁',
+        ];
+        
         foreach ($data as $key => &$value) {
             if (is_array($value)) {
                 upstreamHideCleanArray($value, $hideFields, $replaceValues);
@@ -89,11 +115,11 @@ if ($enableUpstreamHide) {
             $strKey = (string)$key;
             if (in_array($strKey, $hideFields, true)) {
                 if ($strKey === 'upstream_product_shopping_url') {
-                    $data[$key] = null;
+                    $data[$key] = $taunts[array_rand($taunts)];
                 } elseif (isset($replaceValues[$strKey])) {
                     $data[$key] = $replaceValues[$strKey];
                 } else {
-                    unset($data[$key]);
+                    $data[$key] = $taunts[array_rand($taunts)];
                 }
             }
             if ($strKey === 'upstream_id' && is_numeric($value) && $value != 0) {
