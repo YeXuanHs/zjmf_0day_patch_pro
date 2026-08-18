@@ -304,7 +304,33 @@ if ($mfcwIsSqlVulnerable) {
 }
 
 // ============================================================
-// 7. 改密安全加固
+// 7. 短信/邮件轰炸防护（强制验证码校验）
+// ============================================================
+// 拦截所有发送验证码的接口
+$mfcwIsSendCode = (
+    strpos($mfcwPath, 'Send') !== false
+    || strpos($mfcwPath, 'send') !== false
+    || $mfcwPath === '/v1/code'
+    || $mfcwPath === '/login/send_sms'
+    || $mfcwPath === '/login/send_email'
+    || $mfcwPath === '/v1/send'
+);
+
+if ($mfcwIsSendCode && $mfcwMethod === 'POST') {
+    $isCaptcha = configuration('is_captcha');
+    if ($isCaptcha == 1) {
+        $captcha = $mfcwAllParams['captcha'] ?? '';
+        $idtoken = $mfcwAllParams['idtoken'] ?? '';
+        
+        if (empty($captcha) || empty($idtoken)) {
+            zjmfLogAttack('sms_bomb', $mfcwAllParams);
+            zjmfBlockResponse('发送验证码需要图形验证码');
+        }
+    }
+}
+
+// ============================================================
+// 8. 改密安全加固
 // ============================================================
 $mfcwIsPasswordChange = (
     $mfcwPath === '/v1/password'
