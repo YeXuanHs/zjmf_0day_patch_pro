@@ -4,12 +4,13 @@
  * 
  * 功能：
  * 1. 零元购漏洞拦截（resource_percent_value 等价格操控参数）
- * 2. SQL注入防护（keywords、account 等）
- * 3. 注册验证码强制（图形验证码 + 短信/邮箱验证码）
- * 4. 改密安全加固（拦截未携带旧密码的请求）
- * 5. 开放重定向防护（redirect_url 仅允许站内域名）
- * 6. 上游信息隐藏（ob_start 过滤）
- * 7. 可选关闭整个 /v1 目录
+ * 2. 零元续费漏洞拦截（resource_handling 参数）
+ * 3. 零元升级漏洞拦截（resource_percent_value 参数）
+ * 4. 注册验证码强制（图形验证码 + 短信/邮箱验证码）
+ * 5. 改密安全加固（拦截未携带旧密码的请求）
+ * 6. 开放重定向防护（redirect_url 仅允许站内域名）
+ * 7. 上游信息隐藏（ob_start 过滤）
+ * 8. 可选关闭整个 /v1 目录
  * 
  * 加载方式：在 /public/index.php 的 require base.php 之后加一行：
  * require CMF_ROOT . 'zjmf_0day_patch_pro.php';
@@ -243,78 +244,72 @@ if ($mfcwIsCheckout && $mfcwMethod === 'POST') {
 }
 
 // ============================================================
-// 5. SQL注入防护
+// 5. 零元续费漏洞拦截
 // ============================================================
-$mfcwIsSqlVulnerable = (
-    $mfcwPath === '/v1/funds'
-    || $mfcwPath === '/v1/login'
-    || $mfcwPath === '/v1/login_api'
-    || $mfcwPath === '/login'
-    || $mfcwPath === '/v1/register'
-    || $mfcwPath === '/register'
-    || $mfcwPath === '/v1/affiliates'
-    || $mfcwPath === '/v1/affiliates/record'
-    || $mfcwPath === '/v1/affiliates/withdraw_record'
+$mfcwIsRenew = (
+    $mfcwPath === '/servicedetail'
+    && $mfcwAction === 'renew'
+    && $mfcwMethod === 'POST'
+) || (
+    strpos($mfcwPath, '/v1/hosts/') !== false
+    && strpos($mfcwPath, '/renew') !== false
+    && $mfcwMethod === 'POST'
+) || (
+    strpos($mfcwPath, '/v1/products/') !== false
+    && strpos($mfcwPath, '/renew') !== false
+    && $mfcwMethod === 'POST'
 );
 
-if ($mfcwIsSqlVulnerable) {
-    $sqlInjectionPatterns = [
-        "'", '"', ';', '--', '#', '/*', '*/',
-        ' OR ', ' AND ', ' UNION ', ' SELECT ', ' INSERT ',
-        ' UPDATE ', ' DELETE ', ' DROP ', ' TRUNCATE ', ' ALTER ',
-        ' CREATE ', ' EXEC ', ' EXECUTE ',
-        ' SLEEP(', ' BENCHMARK(', ' WAITFOR ',
-        ' EXTRACTVALUE(', ' UPDATEXML(', ' LOAD_FILE(',
-        ' INTO OUTFILE', ' INTO DUMPFILE', ' INFORMATION_SCHEMA',
-        '/**/', '/*!',
+if ($mfcwIsRenew) {
+    $dangerousRenewParams = [
+        'resource_handling', 'resource_percent_value', 'resource_percent',
+        'percent_value', 'discount_percent', 'price_percent',
+        'custom_price', 'override_price', 'price_override', 'amount_override',
     ];
 
-    // 排除的参数（密码、验证码、邮箱等可能包含特殊字符的字段）
-    $excludeParams = [
-        'password', 'old_password', 'new_password', 'repassword',
-        'checkPassword', 'confirm_password', 'captcha', 'code',
-        'sms_code', 'phone_code', 'email_code', 'verify_code',
-        'email', 'mail', 'e_mail',
-    ];
-
-    $mfcwBlocked = false;
-    $blockedParam = '';
-
-    foreach ($mfcwAllParams as $key => $value) {
-        if (!is_string($value)) continue;
-        // 跳过排除的参数
-        if (in_array($key, $excludeParams)) continue;
-        $valueUpper = strtoupper($value);
-        foreach ($sqlInjectionPatterns as $pattern) {
-            if (strpos($valueUpper, strtoupper($pattern)) !== false) {
-                $mfcwBlocked = true;
-                $blockedParam = $key;
-                break 2;
+    foreach ($dangerousRenewParams as $param) {
+        if (array_key_exists($param, $mfcwAllParams)) {
+            $value = $mfcwAllParams[$param];
+            if (is_numeric($value) && floatval($value) < 1) {
+                zjmfLogAttack('zero_cost', $mfcwAllParams);
+                zjmfBlockResponse('', 'zero_cost');
             }
         }
     }
+}
 
-    if (isset($mfcwAllParams['keywords'])) {
-        $kw = $mfcwAllParams['keywords'];
-        if (preg_match('/[\'";\\\\]/', $kw) ||
-            preg_match('/\b(OR|AND|UNION|SELECT|INSERT|UPDATE|DELETE|DROP)\b/i', $kw)) {
-            $mfcwBlocked = true;
-            $blockedParam = 'keywords';
+// ============================================================
+// 6. 零元升级漏洞拦截
+// ============================================================
+$mfcwIsUpgrade = (
+    strpos($mfcwPath, '/upgrade/') !== false
+    && strpos($mfcwPath, 'Checkout') !== false
+    && $mfcwMethod === 'POST'
+) || (
+    strpos($mfcwPath, '/v1/hosts/') !== false
+    && strpos($mfcwPath, '/actions/upgradeconfig') !== false
+    && $mfcwMethod === 'POST'
+) || (
+    strpos($mfcwPath, '/v1/hosts/') !== false
+    && strpos($mfcwPath, '/actions/upgrade') !== false
+    && $mfcwMethod === 'POST'
+);
+
+if ($mfcwIsUpgrade) {
+    $dangerousUpgradeParams = [
+        'resource_percent_value', 'resource_percent', 'percent_value',
+        'discount_percent', 'price_percent', 'custom_price',
+        'override_price', 'price_override', 'amount_override',
+    ];
+
+    foreach ($dangerousUpgradeParams as $param) {
+        if (array_key_exists($param, $mfcwAllParams)) {
+            $value = $mfcwAllParams[$param];
+            if (is_numeric($value) && floatval($value) < 1) {
+                zjmfLogAttack('zero_cost', $mfcwAllParams);
+                zjmfBlockResponse('', 'zero_cost');
+            }
         }
-    }
-
-    if (isset($mfcwAllParams['account'])) {
-        $acc = $mfcwAllParams['account'];
-        if (preg_match('/[\'";\\\\]/', $acc) ||
-            preg_match('/\b(OR|AND|UNION|SELECT)\b/i', $acc)) {
-            $mfcwBlocked = true;
-            $blockedParam = 'account';
-        }
-    }
-
-    if ($mfcwBlocked) {
-        zjmfLogAttack('sql_injection', array_merge($mfcwAllParams, ['_blocked_param' => $blockedParam]));
-        zjmfBlockResponse('', 'sql_injection');
     }
 }
 
@@ -330,7 +325,6 @@ $mfcwIsRegister = (
 );
 
 if ($mfcwIsRegister && $mfcwMethod === 'POST') {
-    // 检查是否开启了图形验证码（通过配置文件读取，避免依赖 ThinkPHP）
     $captchaConfig = CMF_ROOT . 'app/config/session.php';
     $isCaptcha = 0;
     if (function_exists('configuration')) {
@@ -341,7 +335,6 @@ if ($mfcwIsRegister && $mfcwMethod === 'POST') {
         $captcha = $mfcwAllParams['captcha'] ?? '';
         $idtoken = $mfcwAllParams['idtoken'] ?? '';
         
-        // 只检查参数是否存在，实际验证由系统完成
         if (empty($captcha) || empty($idtoken)) {
             zjmfLogAttack('register_captcha_bypass', $mfcwAllParams);
             zjmfBlockResponse('', 'captcha_bypass');
@@ -352,7 +345,6 @@ if ($mfcwIsRegister && $mfcwMethod === 'POST') {
 // ============================================================
 // 8. 短信/邮件轰炸防护（强制验证码校验）
 // ============================================================
-// 拦截所有发送验证码的接口
 $mfcwIsSendCode = (
     strpos($mfcwPath, 'Send') !== false
     || strpos($mfcwPath, 'send') !== false
@@ -371,14 +363,12 @@ if ($mfcwIsSendCode && $mfcwMethod === 'POST') {
         $captcha = $mfcwAllParams['captcha'] ?? '';
         $idtoken = $mfcwAllParams['idtoken'] ?? '';
         
-        // 只检查参数是否存在，实际验证由系统完成
         if (empty($captcha) || empty($idtoken)) {
             zjmfLogAttack('sms_bomb', $mfcwAllParams);
             zjmfBlockResponse('', 'sms_bomb');
         }
     }
     
-    // 短信/邮件发送频率限制
     if ($smsRateLimit > 0) {
         $target = $mfcwAllParams['phone'] ?? $mfcwAllParams['phonenumber'] ?? $mfcwAllParams['email'] ?? '';
         if (!empty($target)) {
@@ -391,21 +381,18 @@ if ($mfcwIsSendCode && $mfcwMethod === 'POST') {
             $now = time();
             $targetHash = md5($target);
             
-            // 清理过期记录
             if (isset($rateData[$targetHash])) {
                 $rateData[$targetHash] = array_filter($rateData[$targetHash], function($ts) use ($now) {
                     return ($now - $ts) < 60;
                 });
             }
             
-            // 检查频率
             $count = isset($rateData[$targetHash]) ? count($rateData[$targetHash]) : 0;
             if ($count >= $smsRateLimit) {
                 zjmfLogAttack('sms_rate_limit', ['target' => $target, 'count' => $count]);
                 zjmfBlockResponse('', 'rate_limit');
             }
             
-            // 记录本次发送
             $rateData[$targetHash][] = $now;
             @file_put_contents($rateFile, json_encode($rateData), LOCK_EX);
         }
@@ -425,7 +412,6 @@ if ($mfcwIsPasswordChange && $mfcwMethod === 'POST') {
     $oldPassword = $mfcwAllParams['old_password'] ?? '';
     $flag = isset($mfcwAllParams['flag']) ? intval($mfcwAllParams['flag']) : 0;
 
-    // flag != 1 时跳过旧密码验证，这是漏洞
     if ($flag !== 1 && empty($oldPassword)) {
         zjmfLogAttack('password_bypass', ['flag' => $flag, 'path' => $mfcwPath]);
         zjmfBlockResponse('', 'password_bypass');
@@ -440,12 +426,10 @@ $mfcwRedirectUrl = $mfcwAllParams['redirect_url'] ?? $mfcwAllParams['redirect'] 
 if (!empty($mfcwRedirectUrl)) {
     $isAllowed = false;
 
-    // 检查是否是相对路径
     if (strpos($mfcwRedirectUrl, '/') === 0 && strpos($mfcwRedirectUrl, '//') !== 0) {
         $isAllowed = true;
     }
 
-    // 检查是否是允许的域名
     if (!$isAllowed) {
         $parsedUrl = parse_url($mfcwRedirectUrl);
         if (!empty($parsedUrl['host'])) {
@@ -458,7 +442,6 @@ if (!empty($mfcwRedirectUrl)) {
         }
     }
 
-    // 检查协议相对绕过 //evil.com
     if (!$isAllowed && strpos($mfcwRedirectUrl, '//') === 0) {
         $domain = parse_url('https:' . $mfcwRedirectUrl, PHP_URL_HOST);
         foreach ($allowedDomains as $allowedDomain) {
@@ -571,22 +554,18 @@ function zjmfBlockResponse($customMsg = '', $attackType = '')
 // 嘲讽文案配置（统一管理）
 // ============================================================
 
-/**
- * 获取随机嘲讽文案
- * @param string $type 攻击类型
- * @return string 随机嘲讽文案
- */
 function zjmfGetTaunt($type = '')
 {
-    // 所有嘲讽文案集中在这里管理
     $taunts = [
-        // 0元购
+        // 0元购/0元续费/0元升级（共用）
         'zero_cost' => [
             '你0元购你妈逼呢，小乐子，被我拦下来了吧哈哈哈',
             '小朋友，0元购是违法的哦，已割掉你的牛子',
             '检测到白嫖狗一只，拦截成功',
+            '你的小把戏被发现了呢，要不要找叔叔请你喝杯茶',
             '零元购你是来搞笑的吧',
             '抱歉，本店不支持乞丐模式',
+            '你的智商似乎不足以完成这次攻击',
             '温馨提示：免费的东西最贵，比如你的时间',
         ],
         // 改密绕过
@@ -605,14 +584,6 @@ function zjmfGetTaunt($type = '')
             '没有图形验证码，你连门都进不来',
             '图形验证码是干嘛的？就是防你这种人的',
             '想绕过图形验证码？你还不够格',
-        ],
-        // SQL注入
-        'sql_injection' => [
-            'SQL注入？你是从2010年穿越来的吗',
-            '检测到SQL注入攻击，你的技术还停留在上个世纪',
-            '想注入？先把你的注入语法学学好吧',
-            'SQL注入已经被我们拦截了，你还是放弃吧',
-            '你的注入 payload 太垃圾了，我都懒得看',
         ],
         // 开放重定向
         'open_redirect' => [
@@ -681,7 +652,7 @@ function zjmfGetTaunt($type = '')
             '上游信息已脱敏，请勿窥探',
             '你永远不知道我们的上游是谁',
         ],
-        // 默认（未知攻击类型）
+        // 默认
         'default' => [
             '检测到异常请求，已拦截',
             '你的攻击被发现了，要不要找叔叔喝杯茶',
@@ -690,7 +661,6 @@ function zjmfGetTaunt($type = '')
         ],
     ];
 
-    // 根据类型返回随机嘲讽
     if (!empty($type) && isset($taunts[$type])) {
         return $taunts[$type][array_rand($taunts[$type])];
     }
